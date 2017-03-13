@@ -93,22 +93,9 @@ int8_t motorHome() {
     //Get the rotor state
     return readRotorState();
 }
-
-//Task Starter
-void threadStarter();
-void interruptUpdateMotor();
-
-//Task 1
-
-//Task 2
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-
+    
 //Main
 int main() {
-#if 0
     int8_t orState = 0;    //Rotot offset at motor state 0
     
     //Initialise the serial port
@@ -130,55 +117,4 @@ int main() {
             motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
         }
     }
-#else
-    //Start running threadStarter
-    Serial pc(SERIAL_TX, SERIAL_RX);
-    Thread thrStarter;
-    thrStarter.start(threadStarter);
-    while (1) {
-        pc.printf("Running main thread. Is motor spinning?");
-        wait(1.0);
-    }
-#endif
 }
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-
-//Run starter code with threading and interrupts
-InterruptIn sI1In(I1pin);
-InterruptIn sI2In(I2pin);
-InterruptIn sI3In(I3pin);
-
-//orState is subtracted from future rotor state inputs to align rotor and motor states
-int8_t orState;
-
-void threadStarter() {
-    //Run the motor synchronisation
-    orState = motorHome();
- 
-    //Attach ISR to interrupt pins
-    sI1In.rise(&interruptUpdateMotor);
-    sI1In.fall(&interruptUpdateMotor);
-    sI2In.rise(&interruptUpdateMotor);
-    sI2In.fall(&interruptUpdateMotor);
-    sI3In.rise(&interruptUpdateMotor);
-    sI3In.fall(&interruptUpdateMotor);
-    
-    while (1) {
-        //wait for interrupts
-    }
-}
-
-void interruptUpdateMotor(){
-    int8_t intState = readRotorState();
-    motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
-}
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-
-//Spin motor with defined number of rotations
-
