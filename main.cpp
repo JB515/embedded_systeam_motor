@@ -99,6 +99,7 @@ void threadStarter();
 void interruptUpdateMotor();
 
 //Task 1
+void threadSetVelocity();
 
 //Task 2
 
@@ -134,7 +135,9 @@ int main() {
     //Start running threadStarter
     Serial pc(SERIAL_TX, SERIAL_RX);
     Thread thrStarter;
-    thrStarter.start(threadStarter);
+    //thrStarter.start(threadStarter);
+    Thread thrSetVelocity;
+    thrSetVelocity.start(threadSetVelocity);
     while (1) {
         pc.printf("Running main thread. Is motor spinning?");
         wait(1.0);
@@ -181,6 +184,69 @@ void interruptUpdateMotor(){
 **********************************************************************************************/
 
 //Spin motor at specified velocity (no. rotations per second)
+Timer t;
+void threadSetVelocity(){
+    orState = motorHome();
+    wait(1.0);
+    /*
+    while(1) {
+        for (int i = 0; i < 6; i++) {
+            motorOut((i-orState+6)%6);
+            wait(1);
+        }
+    }
+    */
+    /*
+    double delay = 0.3;
+    while (1) {
+        for (int i = 0; i < 6; i++) {
+            motorOut((i-orState+6)%6);
+            wait(delay);
+        }
+        if (delay > 0.05) {
+            delay *= 0.8;
+        }
+    }
+    */
+    /*
+    int rotations = 1;  //rotations per second
+    double minDelay = (1.0/(6.16*rotations));
+    double delay = (minDelay > 0.3) ? minDelay : 0.3;
+    while (1) {
+        for (int i = 0; i < 6; i++) {
+            motorOut((i-orState+6)%6);
+            wait(delay);
+        }
+        if (delay > minDelay && delay > 0.05) {
+            delay *= 0.5;
+        }
+    }
+    */
+    double referenceSpeed = 1.0;
+    double calculatedSpeed = 0.0;
+    double error = 0.0;
+    double k_p = , k_i = 0, k_d = 0;
+    int oldState = readRotorState();
+    int currentState;
+    //initialise motor
+    motorOut((i-orState+6)%6);
+    wait(1);
+    t.start();
+    while (1) {
+        //claculate current speed
+        t.stop()
+        currentState = readRotorState();
+        calculatedSpeed = 6.0*(float(currentState - oldState)/t.read())
+        //calculate error
+        float error = referenceSpeed - calculatedSpeed;
+        float output = k_p*error;
+        float 
+        //reset timer
+        t.reset();
+        t.start();
+    }
+}
+
 
 /**********************************************************************************************
 ***********************************************************************************************
