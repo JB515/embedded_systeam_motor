@@ -102,6 +102,8 @@ void interruptUpdateMotor();
 void threadSetVelocity();
 
 //Task 2
+void threadSpinMotor();
+void interruptSpinMotor();
 
 /**********************************************************************************************
 ***********************************************************************************************
@@ -137,7 +139,9 @@ int main() {
     Thread thrStarter;
     //thrStarter.start(threadStarter);
     Thread thrSetVelocity;
-    thrSetVelocity.start(threadSetVelocity);
+    //thrSetVelocity.start(threadSetVelocity);
+    Thread thrSpinMotor;
+    thrSpinMotor.start(threadSpinMotor);
     while (1) {
         pc.printf("Running main thread. Is motor spinning?");
         wait(1.0);
@@ -184,7 +188,6 @@ void interruptUpdateMotor(){
 **********************************************************************************************/
 
 //Spin motor at specified velocity (no. rotations per second)
-Timer t;
 void threadSetVelocity(){
     orState = motorHome();
     wait(1.0);
@@ -208,9 +211,8 @@ void threadSetVelocity(){
         }
     }
     */
-    /*
-    int rotations = 1;  //rotations per second
-    double minDelay = (1.0/(6.16*rotations));
+    int rotations = 3;  //rotations per second
+    double minDelay = (1.0/(6.0*double(rotations)));
     double delay = (minDelay > 0.3) ? minDelay : 0.3;
     while (1) {
         for (int i = 0; i < 6; i++) {
@@ -221,30 +223,6 @@ void threadSetVelocity(){
             delay *= 0.5;
         }
     }
-    */
-    double referenceSpeed = 1.0;
-    double calculatedSpeed = 0.0;
-    double error = 0.0;
-    double k_p = , k_i = 0, k_d = 0;
-    int oldState = readRotorState();
-    int currentState;
-    //initialise motor
-    motorOut((i-orState+6)%6);
-    wait(1);
-    t.start();
-    while (1) {
-        //claculate current speed
-        t.stop()
-        currentState = readRotorState();
-        calculatedSpeed = 6.0*(float(currentState - oldState)/t.read())
-        //calculate error
-        float error = referenceSpeed - calculatedSpeed;
-        float output = k_p*error;
-        float 
-        //reset timer
-        t.reset();
-        t.start();
-    }
 }
 
 
@@ -252,7 +230,35 @@ void threadSetVelocity(){
 ***********************************************************************************************
 **********************************************************************************************/
 
-//Spin motor for a defined number of rotation (using velocity and PID control)
+//Spin motor for a defined number of rotations
+volatile int speed = 512;
+volatile int count = 0;
+
+void threadSpinMotor() {
+    orState = motorHome();
+    wait(1.0);
+    int rotations = 50;
+    int dist = 6*rotations;
+    speed = 2;
+    count = 0;
+    int error;
+    sI1In.rise(&interruptSpinMotor);
+    sI1In.fall(&interruptSpinMotor);
+    sI2In.rise(&interruptSpinMotor);
+    sI2In.fall(&interruptSpinMotor);
+    sI3In.rise(&interruptSpinMotor);
+    sI3In.fall(&interruptSpinMotor);
+    while (1) {
+        error = dist - count;
+        speed = (error > 2) ? 2 : error;
+    }
+}
+
+void interruptSpinMotor() {
+    count+= speed;
+    int8_t intState = readRotorState();
+    motorOut((intState-orState+(speed)+6)%6); //+6 to make sure the remainder is positive
+}
 
 /**********************************************************************************************
 ***********************************************************************************************
