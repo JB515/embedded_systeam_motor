@@ -133,18 +133,14 @@ int main() {
         if (intState != intStateOld) {
             intStateOld = intState;
             motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
-            pc.printf("%d\n\r", intState);
+            pc.printf("new rotor state = %d\n\r", intState);
         }
     }
 #else
     //Start running threadStarter
     Thread thrStarter;
-    thrStarter.start(threadStarter);
-    Thread thrSetVelocity;
-    //thrSetVelocity.start(threadSetVelocity);
-    //threadSetVelocity();
-    Thread thrSpinMotor;
-    //thrSpinMotor.start(threadSpinMotor);
+    //thrStarter.start(threadStarter);
+    
     while (1) {
         pc.printf("Running main thread. Is motor spinning?\n\r");
         wait(1.0);
@@ -280,6 +276,66 @@ void interruptSpinMotor() {
     motorOut((intState-orState+(speed>>8)+6)%6); //+6 to make sure the remainder is positive
 }
 
+
+
 /**********************************************************************************************
 ***********************************************************************************************
 **********************************************************************************************/
+int oldState, newState;
+Timer tVelocity;
+double currentVelocity = 0; //in rotations per second
+double newVelocity = 0; // new rotation speed set by PID
+
+double pid(double targetVelocity, double prevVelocity, double &sumError){
+    double error = targetVelocity - currentVelocity;
+    sumError += error;
+    double prevError = targetVelocity - prevVelocity;
+
+    double kp = 10;
+    double ki = 0;
+    double kd = 0;
+
+
+    double proportional = kp * error;
+    double intergral = ki * sumError;
+    double differential = kd * (error - prevError);
+
+    newVelocity = proportional + integral + differential;
+}
+
+void calculateVelocity() {
+    //states go from 0-6 and wrap around
+    //t should be started beforehand
+    t.stop();
+    double time_ - t.read();
+    
+    int stateChange = (newState - oldState)
+    if (stateChange >=0) {
+        currentVelocity =  double(stateChange%6)/time_;
+    }
+    else {
+        currentVelocity = -double(stateChange%6)/time_;
+    }
+}
+
+void spinMotor() {
+    //spin motor based on newVelocity
+    int lead = 2;
+    while (1) {
+        
+    }
+}
+
+void setVelocity(float velocity) {
+    //spins motor based on given velocity in rotations per second
+    //Declare a timer used to calcualte velocity
+    tVelocity.start();
+    sI1In.rise(&calculateVelocity);
+    sI1In.fall(&calculateVelocity);
+    sI2In.rise(&calculateVelocity);
+    sI2In.fall(&calculateVelocity);
+    sI3In.rise(&calculateVelocity);
+    sI3In.fall(&calculateVelocity);
+    Thread th;
+    t.start(spinMotor);
+}
