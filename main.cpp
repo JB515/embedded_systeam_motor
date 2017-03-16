@@ -109,13 +109,15 @@ void interruptSpinMotor();
 ***********************************************************************************************
 **********************************************************************************************/
 
+Serial pc(SERIAL_TX, SERIAL_RX);
+
 //Main
 int main() {
-#if 0
+#if 1
     int8_t orState = 0;    //Rotot offset at motor state 0
     
     //Initialise the serial port
-    Serial pc(SERIAL_TX, SERIAL_RX);
+    //Serial pc(SERIAL_TX, SERIAL_RX);
     int8_t intState = 0;
     int8_t intStateOld = 0;
     pc.printf("Hello\n\r");
@@ -131,19 +133,20 @@ int main() {
         if (intState != intStateOld) {
             intStateOld = intState;
             motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
+            pc.printf("%d\n\r", intState);
         }
     }
 #else
     //Start running threadStarter
-    Serial pc(SERIAL_TX, SERIAL_RX);
     Thread thrStarter;
-    //thrStarter.start(threadStarter);
+    thrStarter.start(threadStarter);
     Thread thrSetVelocity;
     //thrSetVelocity.start(threadSetVelocity);
+    //threadSetVelocity();
     Thread thrSpinMotor;
-    thrSpinMotor.start(threadSpinMotor);
+    //thrSpinMotor.start(threadSpinMotor);
     while (1) {
-        pc.printf("Running main thread. Is motor spinning?");
+        pc.printf("Running main thread. Is motor spinning?\n\r");
         wait(1.0);
     }
 #endif
@@ -211,17 +214,25 @@ void threadSetVelocity(){
         }
     }
     */
-    int rotations = 3;  //rotations per second
-    double minDelay = (1.0/(6.0*double(rotations)));
+    int rotations = 2;  //rotations per second
+    double minDelay = (1.0/(6*double(rotations)));
     double delay = (minDelay > 0.3) ? minDelay : 0.3;
+    Timer t;
     while (1) {
+        t.start();
+        printf("\n\rdelay is %f\n\r", delay);
+        printf("min delay is %f\n\r", minDelay);
         for (int i = 0; i < 6; i++) {
             motorOut((i-orState+6)%6);
             wait(delay);
         }
         if (delay > minDelay && delay > 0.05) {
             delay *= 0.5;
+            if (delay < minDelay) { delay = minDelay; }
         }
+        t.stop();
+        printf("time for one rotation: %f\n\r", t.read());
+        t.reset();
     }
 }
 
@@ -239,7 +250,7 @@ void threadSpinMotor() {
     wait(1.0);
     int rotations = 50;
     int dist = 6*rotations;
-    speed = 2;
+    speed = 512;
     count = 0;
     int error;
     sI1In.rise(&interruptSpinMotor);
@@ -248,16 +259,25 @@ void threadSpinMotor() {
     sI2In.fall(&interruptSpinMotor);
     sI3In.rise(&interruptSpinMotor);
     sI3In.fall(&interruptSpinMotor);
-    while (1) {
+    interruptSpinMotor();
+    error = dist - count;
+    while (error > 0) {
         error = dist - count;
-        speed = (error > 2) ? 2 : error;
+        //speed = (error > 512) ? 512 : error;
+        speed = 512;
+        pc.printf("speed = %d, count = %d, error = %d\n\r", (speed>>8), count, error);
+        int8_t intState = readRotorState();
+        pc.printf("currentState is %d\n\r", intState);
     }
+    speed = 0;
+    printf("Finished Function\n\r");
+    printf("Finished Function\n\r");
 }
 
 void interruptSpinMotor() {
-    count+= speed;
     int8_t intState = readRotorState();
-    motorOut((intState-orState+(speed)+6)%6); //+6 to make sure the remainder is positive
+    count+= (speed >> 8);
+    motorOut((intState-orState+(speed>>8)+6)%6); //+6 to make sure the remainder is positive
 }
 
 /**********************************************************************************************
