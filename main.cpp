@@ -321,8 +321,12 @@ void calculateVelocity() {
 void spinMotor() {
     //spin motor based on newVelocity
     int lead = 2;
+    int oldState = 0;
     while (1) {
-        
+        int intState = readRotorState;
+        if (intState != oldState) {
+            motorOut((intState-orState+speed+6)%6); //+6 to make sure the remainder is positive
+        }
     }
 }
 
@@ -337,5 +341,5 @@ void setVelocity(float velocity) {
     sI3In.rise(&calculateVelocity);
     sI3In.fall(&calculateVelocity);
     Thread th;
-    t.start(spinMotor);
+    th.start(spinMotor);
 }
