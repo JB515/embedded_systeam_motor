@@ -98,12 +98,6 @@ int8_t motorHome() {
 void threadStarter();
 void interruptUpdateMotor();
 
-//Task 1
-void threadSetVelocity();
-
-//Task 2
-void threadSpinMotor();
-void interruptSpinMotor();
 
 /**********************************************************************************************
 ***********************************************************************************************
@@ -182,164 +176,19 @@ void interruptUpdateMotor(){
     motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
 }
 
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
+//////////////////////////////////////////////////////////////////////////////////////////
 
-//Spin motor at specified velocity (no. rotations per second)
-void threadSetVelocity(){
+void setVelocity (){
+    int dutyCycle = 1;
     orState = motorHome();
-    wait(1.0);
-    /*
-    while(1) {
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(1);
-        }
+    int currentState;
+    while (1){
+        currentState = readRotorState ();
+        motorOut (0x7);
+        wait ( (1 - dutyCycle) * 0.01);
+        motorOut(currentState - orState +2); 
+        wait ( (dutyCycle) * 0.01); 
+
     }
-    */
-    /*
-    double delay = 0.3;
-    while (1) {
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(delay);
-        }
-        if (delay > 0.05) {
-            delay *= 0.8;
-        }
-    }
-    */
-    int rotations = 2;  //rotations per second
-    double minDelay = (1.0/(6*double(rotations)));
-    double delay = (minDelay > 0.3) ? minDelay : 0.3;
-    Timer t;
-    while (1) {
-        t.start();
-        printf("\n\rdelay is %f\n\r", delay);
-        printf("min delay is %f\n\r", minDelay);
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(delay);
-        }
-        if (delay > minDelay && delay > 0.05) {
-            delay *= 0.5;
-            if (delay < minDelay) { delay = minDelay; }
-        }
-        t.stop();
-        printf("time for one rotation: %f\n\r", t.read());
-        t.reset();
-    }
-}
-
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-
-//Spin motor for a defined number of rotations
-volatile int speed = 512;
-volatile int count = 0;
-
-void threadSpinMotor() {
-    orState = motorHome();
-    wait(1.0);
-    int rotations = 50;
-    int dist = 6*rotations;
-    speed = 512;
-    count = 0;
-    int error;
-    sI1In.rise(&interruptSpinMotor);
-    sI1In.fall(&interruptSpinMotor);
-    sI2In.rise(&interruptSpinMotor);
-    sI2In.fall(&interruptSpinMotor);
-    sI3In.rise(&interruptSpinMotor);
-    sI3In.fall(&interruptSpinMotor);
-    interruptSpinMotor();
-    error = dist - count;
-    while (error > 0) {
-        error = dist - count;
-        //speed = (error > 512) ? 512 : error;
-        speed = 512;
-        pc.printf("speed = %d, count = %d, error = %d\n\r", (speed>>8), count, error);
-        int8_t intState = readRotorState();
-        pc.printf("currentState is %d\n\r", intState);
-    }
-    speed = 0;
-    printf("Finished Function\n\r");
-    printf("Finished Function\n\r");
-}
-
-void interruptSpinMotor() {
-    int8_t intState = readRotorState();
-    count+= (speed >> 8);
-    motorOut((intState-orState+(speed>>8)+6)%6); //+6 to make sure the remainder is positive
-}
-
-
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-int oldState, newState;
-Timer tVelocity;
-double currentVelocity = 0; //in rotations per second
-double newVelocity = 0; // new rotation speed set by PID
-
-double pid(double targetVelocity, double prevVelocity, double &sumError){
-    double error = targetVelocity - currentVelocity;
-    sumError += error;
-    double prevError = targetVelocity - prevVelocity;
-
-    double kp = 10;
-    double ki = 0;
-    double kd = 0;
-
-
-    double proportional = kp * error;
-    double intergral = ki * sumError;
-    double differential = kd * (error - prevError);
-
-    newVelocity = proportional + integral + differential;
-}
-
-void calculateVelocity() {
-    //states go from 0-6 and wrap around
-    //t should be started beforehand
-    t.stop();
-    double time_ - t.read();
     
-    int stateChange = (newState - oldState)
-    if (stateChange >=0) {
-        currentVelocity =  double(stateChange%6)/time_;
-    }
-    else {
-        currentVelocity = -double(stateChange%6)/time_;
-    }
-}
-
-void spinMotor() {
-    //spin motor based on newVelocity
-    int lead = 2;
-    int oldState = 0;
-    while (1) {
-        int intState = readRotorState;
-        if (intState != oldState) {
-            motorOut((intState-orState+speed+6)%6); //+6 to make sure the remainder is positive
-        }
-    }
-}
-
-void setVelocity(float velocity) {
-    //spins motor based on given velocity in rotations per second
-    //Declare a timer used to calcualte velocity
-    tVelocity.start();
-    sI1In.rise(&calculateVelocity);
-    sI1In.fall(&calculateVelocity);
-    sI2In.rise(&calculateVelocity);
-    sI2In.fall(&calculateVelocity);
-    sI3In.rise(&calculateVelocity);
-    sI3In.fall(&calculateVelocity);
-    Thread th;
-    th.start(spinMotor);
-}
+ }
