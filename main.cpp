@@ -49,19 +49,20 @@ DigitalIn I2(I2pin);
 DigitalIn I3(I3pin);
 
 //Motor Drive outputs
-DigitalOut L1L(L1Lpin);
+PwmOut L1L(L1Lpin);
 DigitalOut L1H(L1Hpin);
-DigitalOut L2L(L2Lpin);
+PwmOut L2L(L2Lpin);
 DigitalOut L2H(L2Hpin);
-DigitalOut L3L(L3Lpin);
+PwmOut L3L(L3Lpin);
 DigitalOut L3H(L3Hpin);
 
 //Set a given drive state
-void motorOut(int8_t driveState){
+void motorOut(int8_t driveState, double delta=1.0) {
     
     //Lookup the output byte from the drive state.
     int8_t driveOut = driveTable[driveState & 0x07];
-      
+    
+    /*
     //Turn off first
     if (~driveOut & 0x01) L1L = 0;
     if (~driveOut & 0x02) L1H = 1;
@@ -76,6 +77,24 @@ void motorOut(int8_t driveState){
     if (driveOut & 0x04) L2L = 1;
     if (driveOut & 0x08) L2H = 0;
     if (driveOut & 0x10) L3L = 1;
+    if (driveOut & 0x20) L3H = 0;
+    */
+
+    
+    //Turn off first
+    if (~driveOut & 0x01) L1L = 0;
+    if (~driveOut & 0x02) L1H = 1;
+    if (~driveOut & 0x04) L2L = 0;
+    if (~driveOut & 0x08) L2H = 1;
+    if (~driveOut & 0x10) L3L = 0;
+    if (~driveOut & 0x20) L3H = 1;
+    
+    //Then turn on
+    if (driveOut & 0x01) L1L = delta;
+    if (driveOut & 0x02) L1H = 0;
+    if (driveOut & 0x04) L2L = delta;
+    if (driveOut & 0x08) L2H = 0;
+    if (driveOut & 0x10) L3L = delta;
     if (driveOut & 0x20) L3H = 0;
     }
     
@@ -94,9 +113,98 @@ int8_t motorHome() {
     return readRotorState();
 }
 
+/////////////////////////////////COMMAND LINE INTERACE//////////////////////////////////////////
+
+struct State {
+    int rotate;     //1 if R
+    int velocity;   //1 if V
+    int state;      //different states of DFA (1 = R, 2 = V, 3 = RV)
+    float rotVal;
+    float velVal;
+};
+
+typedef struct State* State_h;
+
+void stateInit(State_h s) {
+    s->rotate = 0;
+    s->velocity = 0;
+    s->state = 0;
+    s->rotVal = 0;
+    s->velVal = 0;
+}
+
+int parseDigit(char c) {
+    return (
+            c == '0' || c == '1' || c == '2' || c == '3' || c == '4'
+             || c == '5' || c == '6' || c == '7' || c == '8' || c == '9'
+            );
+}
+
+//should only be called if parseDigit is successful
+int readDigit(char c) {
+    char* digitArray = "0123456789";
+    for (int i=0; i < 10; i++) {
+        if (digitArray[i] == c) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int parseChar(char c, char input) {
+    return (input==c);
+}
+
+///returns the index of the last digit of the number and sets result
+int parseNumber(char* s, int start, float* result) {
+    int foundDecimal = 0;
+    int foundMinus = 0;
+    int i = start;
+    while (i < 16 && (parseDigit(s[i]) || parseChar('.', s[i]) || parseChar('-', s[i]))) {
+        if (parseChar('.', s[i]) && (i == start || foundDecimal)) {
+            i = 0;
+            break;
+        }
+        else if (parseChar('.', s[i])){
+            foundDecimal = 1;
+        }
+        else if (parseChar('-', s[i]) && (i != start || foundMinus)) {
+            i = 0;
+            break;
+        }
+        else if (parseChar('-', s[i])){
+            foundMinus = 1;
+        }
+        i++;
+    }
+    //if we managed to parse one of more digits
+    if (i > start) {
+        //take the characters between and including start and i
+        char num[17] = "0000000000000000";
+        for (int j = start; j < i+1; j++) {
+            num[j-start] = s[j];
+        }
+        *result = atof(num);
+        return i;
+    }
+    else {
+        //falied to parse any number
+        return -1;
+    }
+}
+
+void threadReadInput();
+
+///////////////////////////////COMMAND LINE INTERACE END////////////////////////////////////////
+
+
 //Task Starter
 void threadStarter();
 void interruptUpdateMotor();
+
+//Task velocity
+void setVelocity();
+void calculateVelocity();
 
 
 /**********************************************************************************************
@@ -107,7 +215,7 @@ Serial pc(SERIAL_TX, SERIAL_RX);
 
 //Main
 int main() {
-#if 1
+#if 0
     int8_t orState = 0;    //Rotot offset at motor state 0
     
     //Initialise the serial port
@@ -131,14 +239,7 @@ int main() {
         }
     }
 #else
-    //Start running threadStarter
-    Thread thrStarter;
-    //thrStarter.start(threadStarter);
-    
-    while (1) {
-        pc.printf("Running main thread. Is motor spinning?\n\r");
-        wait(1.0);
-    }
+    setVelocity();
 #endif
 }
 
@@ -156,6 +257,7 @@ int8_t orState;
 
 void threadStarter() {
     //Run the motor synchronisation
+    pc.printf("Starting thread...\n\r");
     orState = motorHome();
  
     //Attach ISR to interrupt pins
@@ -177,7 +279,7 @@ void interruptUpdateMotor(){
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
-
+/*
 void setVelocity (){
     int dutyCycle = 1;
     orState = motorHome();
@@ -192,3 +294,111 @@ void setVelocity (){
     }
     
  }
+ */
+ ////////////////////////////////////////////////////////////////////////////////////////
+ 
+void threadReadInput() {
+    
+    while (1) {
+        pc.printf("Please type some input:\n\r");
+        char input[16];
+        State_h s = (struct State*)malloc(sizeof(struct State));
+        stateInit(s);
+        //scan input
+        pc.scanf("%s", &input);
+        //pcprintf("input = %s\n", input);
+        //parse input
+        int i = 0;
+        while (s->state < 2 && input[i] != '\0') {
+            switch (input[i]) {
+                case 'R': case 'r':
+                    if (s->state == 0) {
+                        float val = 0.0;
+                        int newPos = parseNumber(input, i+1, &val);
+                        if (newPos != -1) {
+                            //printf("rotVal = %f\n", val);
+                            s->state = 1;
+                            s->rotate = 1;
+                            s->rotVal = val;
+                            i = newPos-1;
+                        }
+                    }
+                    break;
+                case 'V': case 'v':
+                    if (s->state == 0 || s->state == 1) {
+                        float val = 0.0;
+                        int newPos = parseNumber(input, i+1, &val);
+                        if (newPos != -1) {
+                            //printf("velVal = %f\n", val);
+                            s->state = 2;
+                            s->velocity = 1;
+                            s->velVal = val;
+                            i = newPos-1;
+                        }
+                    }
+            }
+
+            i++;
+        }
+        //call threads here
+        if (s->rotate && s->velocity) {
+            pc.printf("Calling rotate and velocity function with R=%f, V=%f...\n\r", s->rotVal, s->velVal);
+            //insert here
+        }
+        else if (s->rotate) {
+            pc.printf("Calling just rotate function with R=%f...\n\r", s->rotVal);
+        }
+        else if (s->velocity) {
+            pc.printf("Calling just velocity function with V=%f...\n\r", s->velVal);
+        }
+        free(s);
+    }
+}
+
+double delta = 1.0;
+Timer t_calcVel;
+int8_t intState = 0;
+int8_t intStateOld = 0;
+double currentTime = 0;
+
+void setVelocity() {
+    
+    t_calcVel.start();
+    
+    //Initialise the serial port
+    //Serial pc(SERIAL_TX, SERIAL_RX);
+    
+    pc.printf("Hello\n\r");
+    
+    //Run the motor synchronisation
+    orState = motorHome();
+    pc.printf("Rotor origin: %x\n\r",orState);
+    //orState is subtracted from future rotor state inputs to align rotor and motor states
+    
+    //Poll the rotor state and set the motor outputs accordingly to spin the motor
+    while (1) {
+        intState = readRotorState();
+        if (intState != intStateOld) {
+            intStateOld = intState;
+            motorOut((intState-orState+lead+6)%6, delta); //+6 to make sure the remainder is positive
+            //pc.printf("new rotor state = %d\n\r", intState);
+            calculateVelocity();
+        }
+    }
+}
+
+void calculateVelocity() {
+    //states go from 0-6 and wrap around
+    //t_calcVel should be started beforehand
+    intState = readRotorState();
+    if (intState == 0) {
+        t_calcVel.stop();
+        double time_ = t_calcVel.read();
+        if (currentTime != time_) {
+            pc.printf("%f\n\r",1.0/time_);
+            currentTime = time_;
+        }
+        t_calcVel.reset();
+        t_calcVel.start();
+    }
+}
