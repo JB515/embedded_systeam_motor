@@ -38,7 +38,7 @@ const int8_t stateMap[] = {0x07,0x05,0x03,0x04,0x01,0x00,0x02,0x07};
 //const int8_t stateMap[] = {0x07,0x01,0x03,0x02,0x05,0x00,0x04,0x07}; //Alternative if phase order of input or drive is reversed
 
 //Phase lead to make motor spin
-const int8_t lead = -2;  //2 for forwards, -2 for backwards
+volatile int8_t lead = -2;  //2 for forwards, -2 for backwards
 
 //Status LED
 DigitalOut led1(LED1);
@@ -47,6 +47,10 @@ DigitalOut led1(LED1);
 DigitalIn I1(I1pin);
 DigitalIn I2(I2pin);
 DigitalIn I3(I3pin);
+
+//encoder input pins
+DigitalIn IncA(CHA);
+DigitalIn IncB(CHB);
 
 //Motor Drive outputs
 PwmOut L1L(L1Lpin);
@@ -197,6 +201,26 @@ void threadReadInput();
 
 ///////////////////////////////COMMAND LINE INTERACE END////////////////////////////////////////
 
+/////////////////////////////////GLOBAL VARIABLES/////////////////////////////////////////////
+volatile double delta = 1.0;
+Timer t_calcVel;
+volatile int8_t intState = 0;
+volatile int8_t intStateOld = 0;
+volatile double currentTime = 0;
+volatile double currentVelocity = 0;
+volatile double targetVelocity = 15;
+volatile double currentNumOfRotations = 0.0;
+volatile double numOfRotations = 10.0;
+volatile double oldError = 0;
+Serial pc(SERIAL_TX, SERIAL_RX);
+//Run starter code with threading and interrupts
+InterruptIn sI1In(I1pin);
+InterruptIn sI2In(I2pin);
+InterruptIn sI3In(I3pin);
+InterruptIn chAIn(I2pin);
+InterruptIn chBIn(I3pin);
+
+/////////////////////////////////FUNCTION DECLARATIONS//////////////////////////////////////////
 
 //Task Starter
 void threadStarter();
@@ -206,20 +230,12 @@ void interruptUpdateMotor();
 void setVelocity();
 void calculateVelocity();
 
+//Task position
+void calculateNumRotations();
+void setRotationWithVelocity();
 
-/////////////////////////////////GLOBAL VARIABLES/////////////////////////////////////////////
-double delta = 1.0;
-Timer t_calcVel;
-int8_t intState = 0;
-int8_t intStateOld = 0;
-double currentTime = 0;
-double currentVelocity = 0;
-double targetVelocity;
-Serial pc(SERIAL_TX, SERIAL_RX);
-//Run starter code with threading and interrupts
-InterruptIn sI1In(I1pin);
-InterruptIn sI2In(I2pin);
-InterruptIn sI3In(I3pin);
+
+
 
 //orState is subtracted from future rotor state inputs to align rotor and motor states
 int8_t orState = 0;
@@ -236,8 +252,8 @@ int main() {
     
     //Initialise the serial port
     //Serial pc(SERIAL_TX, SERIAL_RX);
-    int8_t intState = 0;
-    int8_t intStateOld = 0;
+    //int8_t intState = 0;
+    //int8_t intStateOld = 0;
     pc.printf("Hello\n\r");
     
     
@@ -257,6 +273,10 @@ int main() {
     }
 #else
     setVelocity();
+    //Thread thrSetVelocity;
+    //thrSetVelocity.start(setVelocity);
+    //Thread thrSetRotationWithVelocity;
+    //thrSetRotationWithVelocity.start(setRotationWithVelocity);
 #endif
 }
 
@@ -366,11 +386,23 @@ void threadReadInput() {
 }
 
 
+volatile bool velDecreasing = false;
+Timer t_motorPeriod;
+volatile double velErrorDeltaSum = 0;
+volatile double posError = -1;
+
+
 void setVelocity() {
     //set target velocity
-    targetVelocity = 5;
-    
+    targetVelocity = 8.350;
+    lead = 2;
+    if (targetVelocity < 0) {
+        targetVelocity = - targetVelocity;
+        lead = -2;
+    }
+    delta = 1;
     t_calcVel.start();
+    t_motorPeriod.start();
     
     pc.printf("Hello\n\r");
     
@@ -394,6 +426,8 @@ void setVelocity() {
     }
 }
 
+
+
 void calculateVelocity() {
     //states go from 0-6 and wrap around
     //t_calcVel should be started beforehand
@@ -403,17 +437,69 @@ void calculateVelocity() {
         double time_ = t_calcVel.read();
         if (currentTime != time_) {
             currentVelocity = 1.0/time_;
-            pc.printf("currentVelocity = %f, targetVelocity = %f\n\r",currentVelocity, targetVelocity);
+            //measure period
+            
+            pc.printf("currentVelocity = %f, targetVelocity = %f, delta = %F\n\r",currentVelocity, targetVelocity, delta);
             currentTime = time_;
             //set delta using PID
             double error = targetVelocity - currentVelocity;
-            double k_p = 0.01;
+            //double k_p = 0.01;
+            double k_p = 1.0;
+            //double k_i = 1.2;
+            //double k_d = 0.3;
+            double k_i = 0.05;
+            double k_d = 2.0;
             double errorDelta = (k_p*error)/20.0;
-            delta += errorDelta;
+            //delta += errorDelta;
+            double errorDeltaChange = (k_d*((error - oldError))/time_)/20.0;
+            velErrorDeltaSum += error/20.0;
+            delta += errorDelta + k_i*velErrorDeltaSum + errorDeltaChange;
+            
+             /*if (error < 0) {
+                if (!velDecreasing) {
+                    t_motorPeriod.stop();
+                    pc.printf("period = %f\n\r", t_motorPeriod.read());
+                    t_motorPeriod.reset();
+                    t_motorPeriod.start();
+                    velDecreasing = true;
+                }
+            }
+            else {
+                velDecreasing = false;
+            }*/
+            
             //delta = delta + errorDelta;
             delta = (delta > 1.0) ? 1.0 : delta;
+            delta = (delta < 0.0) ? 0.0 : delta;
         }
         t_calcVel.reset();
         t_calcVel.start();
+    }
+}
+
+void calculateNumRotations() {
+    //read currentState
+    //if intState == orState
+    //then one rotation has been made
+    if (posError > -1) {
+        posError--;
+    }
+}
+
+void setRotationWithVelocity() {
+    numOfRotations = 100.0;
+    currentNumOfRotations = 0.0;
+    posError = floor(numOfRotations*177);
+    while (1) {
+        double k_p = 1.0;
+        //double k_i = 1.2;
+        //double k_d = 0.3;
+        double k_i = 0.05;
+        double k_d = 2.0;
+        //double errorDelta = (k_p*error)/20.0;
+        //delta += errorDelta;
+        //double errorDeltaChange = (k_d*((error - oldError))/time_)/20.0;
+        //velErrorDeltaSum += error/20.0;
+        //delta += errorDelta + k_i*velErrorDeltaSum + errorDeltaChange;
     }
 }
