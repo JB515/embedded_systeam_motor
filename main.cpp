@@ -207,22 +207,39 @@ void setVelocity();
 void calculateVelocity();
 
 
+/////////////////////////////////GLOBAL VARIABLES/////////////////////////////////////////////
+double delta = 1.0;
+Timer t_calcVel;
+int8_t intState = 0;
+int8_t intStateOld = 0;
+double currentTime = 0;
+double currentVelocity = 0;
+double targetVelocity;
+Serial pc(SERIAL_TX, SERIAL_RX);
+//Run starter code with threading and interrupts
+InterruptIn sI1In(I1pin);
+InterruptIn sI2In(I2pin);
+InterruptIn sI3In(I3pin);
+
+//orState is subtracted from future rotor state inputs to align rotor and motor states
+int8_t orState = 0;
+
 /**********************************************************************************************
 ***********************************************************************************************
 **********************************************************************************************/
 
-Serial pc(SERIAL_TX, SERIAL_RX);
+
 
 //Main
 int main() {
 #if 0
-    int8_t orState = 0;    //Rotot offset at motor state 0
     
     //Initialise the serial port
     //Serial pc(SERIAL_TX, SERIAL_RX);
     int8_t intState = 0;
     int8_t intStateOld = 0;
     pc.printf("Hello\n\r");
+    
     
     //Run the motor synchronisation
     orState = motorHome();
@@ -235,7 +252,7 @@ int main() {
         if (intState != intStateOld) {
             intStateOld = intState;
             motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
-            pc.printf("new rotor state = %d\n\r", intState);
+            //pc.printf("new rotor state = %d\n\r", intState);
         }
     }
 #else
@@ -247,13 +264,6 @@ int main() {
 ***********************************************************************************************
 **********************************************************************************************/
 
-//Run starter code with threading and interrupts
-InterruptIn sI1In(I1pin);
-InterruptIn sI2In(I2pin);
-InterruptIn sI3In(I3pin);
-
-//orState is subtracted from future rotor state inputs to align rotor and motor states
-int8_t orState;
 
 void threadStarter() {
     //Run the motor synchronisation
@@ -355,18 +365,12 @@ void threadReadInput() {
     }
 }
 
-double delta = 1.0;
-Timer t_calcVel;
-int8_t intState = 0;
-int8_t intStateOld = 0;
-double currentTime = 0;
 
 void setVelocity() {
+    //set target velocity
+    targetVelocity = 5;
     
     t_calcVel.start();
-    
-    //Initialise the serial port
-    //Serial pc(SERIAL_TX, SERIAL_RX);
     
     pc.printf("Hello\n\r");
     
@@ -378,9 +382,12 @@ void setVelocity() {
     //Poll the rotor state and set the motor outputs accordingly to spin the motor
     while (1) {
         intState = readRotorState();
+        //delta = 1.0;
         if (intState != intStateOld) {
             intStateOld = intState;
+            
             motorOut((intState-orState+lead+6)%6, delta); //+6 to make sure the remainder is positive
+
             //pc.printf("new rotor state = %d\n\r", intState);
             calculateVelocity();
         }
@@ -395,8 +402,16 @@ void calculateVelocity() {
         t_calcVel.stop();
         double time_ = t_calcVel.read();
         if (currentTime != time_) {
-            pc.printf("%f\n\r",1.0/time_);
+            currentVelocity = 1.0/time_;
+            pc.printf("currentVelocity = %f, targetVelocity = %f\n\r",currentVelocity, targetVelocity);
             currentTime = time_;
+            //set delta using PID
+            double error = targetVelocity - currentVelocity;
+            double k_p = 0.01;
+            double errorDelta = (k_p*error)/20.0;
+            delta += errorDelta;
+            //delta = delta + errorDelta;
+            delta = (delta > 1.0) ? 1.0 : delta;
         }
         t_calcVel.reset();
         t_calcVel.start();
