@@ -224,6 +224,7 @@ InterruptIn chBIn(I3pin);
 
 Timer t_recordMaxVel;
 
+
 /////////////////////////////////FUNCTION DECLARATIONS//////////////////////////////////////////
 
 //Task Starter
@@ -242,7 +243,7 @@ void calculateNumRotationsVelocity();
 void calculateNumRotationsLeft();
 void setRotation();
 void setRotationVelocity();
-
+void pushMotor();
 
 
 
@@ -675,6 +676,7 @@ void threadSetVelocity() {
 }
 
 volatile double velErrorVelocitySum = 0;
+Ticker tick_push;
 
 void calculateNumRotationsVelocity() {
     if (intState >= 3 && !rotatedHalf) {
@@ -699,13 +701,16 @@ void calculateNumRotationsVelocity() {
         //targetVelocity += errorVelocity + (k_i*velErrorVelocitySum) + errorVelocityChange;
         targetVelocity = (targetVelocity > maxVelocity) ? maxVelocity : targetVelocity;
         targetVelocity = (targetVelocity < -maxVelocity) ? -maxVelocity : targetVelocity;
-        printf(" num left = %f, target velocity = %f \n\r", currentNumOfRotations, targetVelocity);
+        printf(" num so far = %f, target velocity = %f \n\r", currentNumOfRotations, targetVelocity);
+        tick_push.detach();
+        tick_push.attach(&pushMotor, 10.0);
     }
 }
 
 void setRotationVelocity() {
     //maxVelocity = 5.0;
     rotatedHalf = false;
+    tick_push.attach(&pushMotor, 10.0);
     //numOfRotations = 100.0;
     if (numOfRotations < 0) {
         numOfRotations = -numOfRotations;
@@ -721,7 +726,15 @@ void setRotationVelocity() {
         //printf("running this");
         Thread::wait(100);
         if (targetVelocity < 0) {
+            thrSetVelocity.terminate();
             break;
         }
     }
+}
+
+void pushMotor() {
+    numOfRotations = currentNumOfRotations;
+    currentNumOfRotations = 0;
+    tick_push.detach();
+    tick_push.attach(&pushMotor, 10.0);
 }
