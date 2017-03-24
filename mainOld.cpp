@@ -38,7 +38,7 @@ const int8_t stateMap[] = {0x07,0x05,0x03,0x04,0x01,0x00,0x02,0x07};
 //const int8_t stateMap[] = {0x07,0x01,0x03,0x02,0x05,0x00,0x04,0x07}; //Alternative if phase order of input or drive is reversed
 
 //Phase lead to make motor spin
-const int8_t lead = -2;  //2 for forwards, -2 for backwards
+volatile int8_t lead = -2;  //2 for forwards, -2 for backwards
 
 //Status LED
 DigitalOut led1(LED1);
@@ -48,20 +48,25 @@ DigitalIn I1(I1pin);
 DigitalIn I2(I2pin);
 DigitalIn I3(I3pin);
 
+//encoder input pins
+DigitalIn IncA(CHA);
+DigitalIn IncB(CHB);
+
 //Motor Drive outputs
-DigitalOut L1L(L1Lpin);
+PwmOut L1L(L1Lpin);
 DigitalOut L1H(L1Hpin);
-DigitalOut L2L(L2Lpin);
+PwmOut L2L(L2Lpin);
 DigitalOut L2H(L2Hpin);
-DigitalOut L3L(L3Lpin);
+PwmOut L3L(L3Lpin);
 DigitalOut L3H(L3Hpin);
 
 //Set a given drive state
-void motorOut(int8_t driveState){
+void motorOut(int8_t driveState, double delta=1.0) {
     
     //Lookup the output byte from the drive state.
     int8_t driveOut = driveTable[driveState & 0x07];
-      
+    
+    /*
     //Turn off first
     if (~driveOut & 0x01) L1L = 0;
     if (~driveOut & 0x02) L1H = 1;
@@ -76,6 +81,24 @@ void motorOut(int8_t driveState){
     if (driveOut & 0x04) L2L = 1;
     if (driveOut & 0x08) L2H = 0;
     if (driveOut & 0x10) L3L = 1;
+    if (driveOut & 0x20) L3H = 0;
+    */
+
+    
+    //Turn off first
+    if (~driveOut & 0x01) L1L = 0;
+    if (~driveOut & 0x02) L1H = 1;
+    if (~driveOut & 0x04) L2L = 0;
+    if (~driveOut & 0x08) L2H = 1;
+    if (~driveOut & 0x10) L3L = 0;
+    if (~driveOut & 0x20) L3H = 1;
+    
+    //Then turn on
+    if (driveOut & 0x01) L1L = delta;
+    if (driveOut & 0x02) L1H = 0;
+    if (driveOut & 0x04) L2L = delta;
+    if (driveOut & 0x08) L2H = 0;
+    if (driveOut & 0x10) L3L = delta;
     if (driveOut & 0x20) L3H = 0;
     }
     
@@ -94,33 +117,151 @@ int8_t motorHome() {
     return readRotorState();
 }
 
+/////////////////////////////////COMMAND LINE INTERACE//////////////////////////////////////////
+
+struct State {
+    int rotate;     //1 if R
+    int velocity;   //1 if V
+    int state;      //different states of DFA (1 = R, 2 = V, 3 = RV)
+    float rotVal;
+    float velVal;
+};
+
+typedef struct State* State_h;
+
+void stateInit(State_h s) {
+    s->rotate = 0;
+    s->velocity = 0;
+    s->state = 0;
+    s->rotVal = 0;
+    s->velVal = 0;
+}
+
+int parseDigit(char c) {
+    return (
+            c == '0' || c == '1' || c == '2' || c == '3' || c == '4'
+             || c == '5' || c == '6' || c == '7' || c == '8' || c == '9'
+            );
+}
+
+//should only be called if parseDigit is successful
+int readDigit(char c) {
+    char* digitArray = "0123456789";
+    for (int i=0; i < 10; i++) {
+        if (digitArray[i] == c) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int parseChar(char c, char input) {
+    return (input==c);
+}
+
+///returns the index of the last digit of the number and sets result
+int parseNumber(char* s, int start, float* result) {
+    int foundDecimal = 0;
+    int foundMinus = 0;
+    int i = start;
+    while (i < 16 && (parseDigit(s[i]) || parseChar('.', s[i]) || parseChar('-', s[i]))) {
+        if (parseChar('.', s[i]) && (i == start || foundDecimal)) {
+            i = 0;
+            break;
+        }
+        else if (parseChar('.', s[i])){
+            foundDecimal = 1;
+        }
+        else if (parseChar('-', s[i]) && (i != start || foundMinus)) {
+            i = 0;
+            break;
+        }
+        else if (parseChar('-', s[i])){
+            foundMinus = 1;
+        }
+        i++;
+    }
+    //if we managed to parse one of more digits
+    if (i > start) {
+        //take the characters between and including start and i
+        char num[17] = "0000000000000000";
+        for (int j = start; j < i+1; j++) {
+            num[j-start] = s[j];
+        }
+        *result = atof(num);
+        return i;
+    }
+    else {
+        //falied to parse any number
+        return -1;
+    }
+}
+
+void threadReadInput();
+
+///////////////////////////////COMMAND LINE INTERACE END////////////////////////////////////////
+
+/////////////////////////////////GLOBAL VARIABLES/////////////////////////////////////////////
+volatile double delta = 1.0;
+Timer t_calcVel;
+volatile int8_t intState = 0;
+volatile int8_t intStateOld = 0;
+volatile double currentTime = 0;
+volatile double currentVelocity = 0;
+volatile double targetVelocity = 15;
+volatile double maxVelocity = 0;
+volatile double currentNumOfRotations = 0.0;
+volatile double numOfRotations = 10.0;
+volatile double oldError = 0;
+Serial pc(SERIAL_TX, SERIAL_RX);
+//Run starter code with threading and interrupts
+InterruptIn sI1In(I1pin);
+InterruptIn sI2In(I2pin);
+InterruptIn sI3In(I3pin);
+InterruptIn chAIn(I2pin);
+InterruptIn chBIn(I3pin);
+
+Timer t_recordMaxVel;
+
+/////////////////////////////////FUNCTION DECLARATIONS//////////////////////////////////////////
+
 //Task Starter
 void threadStarter();
 void interruptUpdateMotor();
 
-//Task 1
-void threadSetVelocity();
+//Task velocity
+void recordMaxVelocity();
+void calculateMaxVelocity();
+void setVelocity();
+void calculateVelocity();
+Thread thrSetVelocity;
 
-//Task 2
-void threadSpinMotor();
-void interruptSpinMotor();
+//Task position
+void calculateNumRotations();
+void setRotationWithVelocity();
+
+
+
+
+//orState is subtracted from future rotor state inputs to align rotor and motor states
+int8_t orState = 0;
 
 /**********************************************************************************************
 ***********************************************************************************************
 **********************************************************************************************/
 
-Serial pc(SERIAL_TX, SERIAL_RX);
+
 
 //Main
 int main() {
-#if 1
-    int8_t orState = 0;    //Rotot offset at motor state 0
+#if 0
     
     //Initialise the serial port
     //Serial pc(SERIAL_TX, SERIAL_RX);
-    int8_t intState = 0;
-    int8_t intStateOld = 0;
+    //int8_t intState = 0;
+    //int8_t intStateOld = 0;
     pc.printf("Hello\n\r");
+    
     
     //Run the motor synchronisation
     orState = motorHome();
@@ -133,17 +274,17 @@ int main() {
         if (intState != intStateOld) {
             intStateOld = intState;
             motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
-            pc.printf("new rotor state = %d\n\r", intState);
+            //pc.printf("new rotor state = %d\n\r", intState);
         }
     }
 #else
-    //Start running threadStarter
-    Thread thrStarter;
-    //thrStarter.start(threadStarter);
-    
+    //thrSetVelocity.start(setVelocity);
+    //Thread thrReadInput;
+    //thrReadInput.start(threadReadInput);
+    //recordMaxVelocity();
+    setVelocity();
     while (1) {
-        pc.printf("Running main thread. Is motor spinning?\n\r");
-        wait(1.0);
+        Thread::wait(10000);
     }
 #endif
 }
@@ -152,16 +293,68 @@ int main() {
 ***********************************************************************************************
 **********************************************************************************************/
 
-//Run starter code with threading and interrupts
-InterruptIn sI1In(I1pin);
-InterruptIn sI2In(I2pin);
-InterruptIn sI3In(I3pin);
+void recordMaxVelocity() {
+    //Initialise the serial port
+    //Serial pc(SERIAL_TX, SERIAL_RX);
+    //int8_t intState = 0;
+    //int8_t intStateOld = 0;
+    pc.printf("Hello: measuring max speed:\n\r");
+    
+    //Run the motor synchronisation
+    orState = motorHome();
+    pc.printf("Rotor origin: %x\n\r",orState);
+    //orState is subtracted from future rotor state inputs to align rotor and motor states
+    maxVelocity = 0;
+    t_calcVel.start();
+    t_recordMaxVel.start();
+    //Poll the rotor state and set the motor outputs accordingly to spin the motor
+    while (1) {
+        intState = readRotorState();
+        if (intState != intStateOld) {
+            intStateOld = intState;
+            motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
+            //pc.printf("new rotor state = %d\n\r", intState);
+            calculateMaxVelocity();
+        }
+        double timePassed = t_recordMaxVel.read();
+        if (timePassed > 10.0) {
+            t_recordMaxVel.stop();
+            t_recordMaxVel.reset();
+            break;
+        }
+    }
+    if (maxVelocity <= 0) {
+        recordMaxVelocity();
+        return;
+    }
+    pc.printf("\n\rDone: max velocity = %f", maxVelocity);
+}
 
-//orState is subtracted from future rotor state inputs to align rotor and motor states
-int8_t orState;
+void calculateMaxVelocity() {
+    //states go from 0-6 and wrap around
+    //t_calcVel should be started beforehand
+    intState = readRotorState();
+    if (intState == 0) {
+        t_calcVel.stop();
+        double time_ = t_calcVel.read();
+        if (currentTime != time_) {
+            currentVelocity = 1.0/time_;
+            if (currentVelocity > maxVelocity) {
+                maxVelocity = currentVelocity;
+            }
+            //pc.printf("currentVelocity = %f, targetVelocity = %f, delta = %F\n\r",currentVelocity, targetVelocity, delta);
+            pc.printf(" %f ",currentVelocity);
+            currentTime = time_;
+        }
+        t_calcVel.reset();
+        t_calcVel.start();
+    }
+}
+
 
 void threadStarter() {
     //Run the motor synchronisation
+    pc.printf("Starting thread...\n\r");
     orState = motorHome();
  
     //Attach ISR to interrupt pins
@@ -182,164 +375,195 @@ void interruptUpdateMotor(){
     motorOut((intState-orState+lead+6)%6); //+6 to make sure the remainder is positive
 }
 
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-
-//Spin motor at specified velocity (no. rotations per second)
-void threadSetVelocity(){
+//////////////////////////////////////////////////////////////////////////////////////////
+/*
+void setVelocity (){
+    int dutyCycle = 1;
     orState = motorHome();
-    wait(1.0);
-    /*
-    while(1) {
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(1);
-        }
+    int currentState;
+    while (1){
+        currentState = readRotorState ();
+        motorOut (0x7);
+        wait ( (1 - dutyCycle) * 0.01);
+        motorOut(currentState - orState +2); 
+        wait ( (dutyCycle) * 0.01); 
+
     }
-    */
-    /*
-    double delay = 0.3;
+    
+ }
+ */
+ ////////////////////////////////////////////////////////////////////////////////////////
+ 
+void threadReadInput() {
+    
     while (1) {
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(delay);
+        pc.printf("Please type some input:\n\r");
+        char input[16];
+        State_h s = (struct State*)malloc(sizeof(struct State));
+        stateInit(s);
+        //scan input
+        pc.scanf("%s", &input);
+        //pcprintf("input = %s\n", input);
+        //parse input
+        int i = 0;
+        while (s->state < 2 && input[i] != '\0') {
+            switch (input[i]) {
+                case 'R': case 'r':
+                    if (s->state == 0) {
+                        float val = 0.0;
+                        int newPos = parseNumber(input, i+1, &val);
+                        if (newPos != -1) {
+                            //printf("rotVal = %f\n", val);
+                            s->state = 1;
+                            s->rotate = 1;
+                            s->rotVal = val;
+                            i = newPos-1;
+                        }
+                    }
+                    break;
+                case 'V': case 'v':
+                    if (s->state == 0 || s->state == 1) {
+                        float val = 0.0;
+                        int newPos = parseNumber(input, i+1, &val);
+                        if (newPos != -1) {
+                            //printf("velVal = %f\n", val);
+                            s->state = 2;
+                            s->velocity = 1;
+                            s->velVal = val;
+                            i = newPos-1;
+                        }
+                    }
+            }
+
+            i++;
         }
-        if (delay > 0.05) {
-            delay *= 0.8;
+        //call threads here
+        if (s->rotate && s->velocity) {
+            pc.printf("Calling rotate and velocity function with R=%f, V=%f...\n\r", s->rotVal, s->velVal);
+            //insert here
         }
-    }
-    */
-    int rotations = 2;  //rotations per second
-    double minDelay = (1.0/(6*double(rotations)));
-    double delay = (minDelay > 0.3) ? minDelay : 0.3;
-    Timer t;
-    while (1) {
-        t.start();
-        printf("\n\rdelay is %f\n\r", delay);
-        printf("min delay is %f\n\r", minDelay);
-        for (int i = 0; i < 6; i++) {
-            motorOut((i-orState+6)%6);
-            wait(delay);
+        else if (s->rotate) {
+            pc.printf("Calling just rotate function with R=%f...\n\r", s->rotVal);
         }
-        if (delay > minDelay && delay > 0.05) {
-            delay *= 0.5;
-            if (delay < minDelay) { delay = minDelay; }
+        else if (s->velocity) {
+            pc.printf("Calling just velocity function with V=%f...\n\r", s->velVal);
+            targetVelocity = s->velVal;
         }
-        t.stop();
-        printf("time for one rotation: %f\n\r", t.read());
-        t.reset();
+        free(s);
+        Thread::wait(5000);
     }
 }
 
 
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
+volatile bool velDecreasing = false;
+Timer t_motorPeriod;
+volatile double velErrorDeltaSum = 0;
+volatile double posError = -1;
 
-//Spin motor for a defined number of rotations
-volatile int speed = 512;
-volatile int count = 0;
 
-void threadSpinMotor() {
+void setVelocity() {
+    //set target velocity
+    targetVelocity = 10.0;
+    lead = 2;
+    if (targetVelocity < 0) {
+        targetVelocity = - targetVelocity;
+        lead = -2;
+    }
+    delta = 1;
+    t_calcVel.start();
+    t_motorPeriod.start();
+    
+    pc.printf("Hello\n\r");
+    
+    //Run the motor synchronisation
     orState = motorHome();
-    wait(1.0);
-    int rotations = 50;
-    int dist = 6*rotations;
-    speed = 512;
-    count = 0;
-    int error;
-    sI1In.rise(&interruptSpinMotor);
-    sI1In.fall(&interruptSpinMotor);
-    sI2In.rise(&interruptSpinMotor);
-    sI2In.fall(&interruptSpinMotor);
-    sI3In.rise(&interruptSpinMotor);
-    sI3In.fall(&interruptSpinMotor);
-    interruptSpinMotor();
-    error = dist - count;
-    while (error > 0) {
-        error = dist - count;
-        //speed = (error > 512) ? 512 : error;
-        speed = 512;
-        pc.printf("speed = %d, count = %d, error = %d\n\r", (speed>>8), count, error);
-        int8_t intState = readRotorState();
-        pc.printf("currentState is %d\n\r", intState);
+    pc.printf("Rotor origin: %x\n\r",orState);
+    //orState is subtracted from future rotor state inputs to align rotor and motor states
+    
+    //Poll the rotor state and set the motor outputs accordingly to spin the motor
+    while (1) {
+        intState = readRotorState();
+        //delta = 1.0;
+        if (intState != intStateOld) {
+            intStateOld = intState;          
+            motorOut((intState-orState+lead+6)%6, delta); //+6 to make sure the remainder is positive
+            calculateVelocity();
+        }
+        //Thread::wait(1);
     }
-    speed = 0;
-    printf("Finished Function\n\r");
-    printf("Finished Function\n\r");
-}
-
-void interruptSpinMotor() {
-    int8_t intState = readRotorState();
-    count+= (speed >> 8);
-    motorOut((intState-orState+(speed>>8)+6)%6); //+6 to make sure the remainder is positive
 }
 
 
-
-/**********************************************************************************************
-***********************************************************************************************
-**********************************************************************************************/
-int oldState, newState;
-Timer tVelocity;
-double currentVelocity = 0; //in rotations per second
-double newVelocity = 0; // new rotation speed set by PID
-
-double pid(double targetVelocity, double prevVelocity, double &sumError){
-    double error = targetVelocity - currentVelocity;
-    sumError += error;
-    double prevError = targetVelocity - prevVelocity;
-
-    double kp = 10;
-    double ki = 0;
-    double kd = 0;
-
-
-    double proportional = kp * error;
-    double intergral = ki * sumError;
-    double differential = kd * (error - prevError);
-
-    newVelocity = proportional + integral + differential;
-}
 
 void calculateVelocity() {
     //states go from 0-6 and wrap around
-    //t should be started beforehand
-    t.stop();
-    double time_ - t.read();
-    
-    int stateChange = (newState - oldState)
-    if (stateChange >=0) {
-        currentVelocity =  double(stateChange%6)/time_;
-    }
-    else {
-        currentVelocity = -double(stateChange%6)/time_;
-    }
-}
-
-void spinMotor() {
-    //spin motor based on newVelocity
-    int lead = 2;
-    int oldState = 0;
-    while (1) {
-        int intState = readRotorState;
-        if (intState != oldState) {
-            motorOut((intState-orState+speed+6)%6); //+6 to make sure the remainder is positive
+    //t_calcVel should be started beforehand
+    intState = readRotorState();
+    if (intState == 0) {
+        t_calcVel.stop();
+        double time_ = t_calcVel.read();
+        if (currentTime != time_) {
+            currentVelocity = 1.0/time_;
+            //measure period
+            
+            //pc.printf("currentVelocity = %f, targetVelocity = %f, delta = %F\n\r",currentVelocity, targetVelocity, delta);
+            pc.printf(" %f ",currentVelocity);
+            currentTime = time_;
+            //set delta using PID
+            double error = targetVelocity - currentVelocity;
+            //double k_p = 0.01;
+            double k_p = 1.0;
+            double k_i = 1.2;
+            double k_d = 0.3;
+            double errorDelta = (k_p*error)/10.0;
+            //delta += errorDelta;
+            double errorDeltaChange = (k_d*((error - oldError))/time_)/10.0;
+            velErrorDeltaSum += error/10.0;
+            //delta += errorDelta + (k_i*velErrorDeltaSum) + errorDeltaChange;
+            delta += errorDelta;
+            /*
+             if (error < 0) {
+                if (!velDecreasing) {
+                    t_motorPeriod.stop();
+                    pc.printf("\n\rperiod = %f\n\r", t_motorPeriod.read());
+                    t_motorPeriod.reset();
+                    t_motorPeriod.start();
+                    velDecreasing = true;
+                }
+            }
+            else {
+                velDecreasing = false;
+            }
+            */
+            //delta = delta + errorDelta;
+            delta = (delta > 1.0) ? 1.0 : delta;
+            delta = (delta < 0.0) ? 0.0 : delta;
         }
+        t_calcVel.reset();
+        t_calcVel.start();
     }
 }
 
-void setVelocity(float velocity) {
-    //spins motor based on given velocity in rotations per second
-    //Declare a timer used to calcualte velocity
-    tVelocity.start();
-    sI1In.rise(&calculateVelocity);
-    sI1In.fall(&calculateVelocity);
-    sI2In.rise(&calculateVelocity);
-    sI2In.fall(&calculateVelocity);
-    sI3In.rise(&calculateVelocity);
-    sI3In.fall(&calculateVelocity);
-    Thread th;
-    th.start(spinMotor);
+void calculateNumRotations() {
+    //read currentState
+    //if intState == orState
+    //then one rotation has been made
+}
+
+void setRotationWithVelocity() {
+    numOfRotations = 100.0;
+    currentNumOfRotations = 0.0;
+    posError = floor(numOfRotations*177);
+    while (1) {
+        double k_p = 1.0;
+        //double k_i = 1.2;
+        //double k_d = 0.3;
+        //double k_i = 0.05;
+        //double k_d = 2.0;
+        //double errorDelta = (k_p*error)/20.0;
+        //delta += errorDelta;
+        //double errorDeltaChange = (k_d*((error - oldError))/time_)/20.0;
+        //velErrorDeltaSum += error/20.0;
+        //delta += errorDelta + k_i*velErrorDeltaSum + errorDeltaChange;
+    }
 }
