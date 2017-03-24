@@ -729,7 +729,7 @@ void setRotationVelocity() {
     while (1) {
         //printf("running this");
         Thread::wait(100);
-        if (targetVelocity <= 0) {
+        if (targetVelocity < 0) {
             thrSetVelocity.terminate();
             break;
         }
