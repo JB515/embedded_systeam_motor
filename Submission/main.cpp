@@ -342,7 +342,6 @@ void recordMaxVelocity() {
     }
     pc.printf("\n\rDone: max velocity = %f", maxVelocity);
 }
-
 void calculateMaxVelocity() {
     //states go from 0-6 and wrap around
     //t_calcVel should be started beforehand
@@ -400,7 +399,6 @@ void setVelocity (){
         wait ( (1 - dutyCycle) * 0.01);
         motorOut(currentState - orState +2); 
         wait ( (dutyCycle) * 0.01); 
-
     }
     
  }
